@@ -28,6 +28,8 @@ export async function sendGenerateRequest(profileId: string, prompt: string): Pr
       },
     ],
     MAX_TOKENS,
+    // Profile presets can add sampler-only fields such as top_k.
+    { includePreset: false },
   )) as ExtractedData;
   return response.content;
 }
