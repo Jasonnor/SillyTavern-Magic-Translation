@@ -8,7 +8,19 @@ type RequestPayload = Record<string, any>;
 // applies the max_completion_tokens conversion for its built-in sources, but
 // custom OpenAI-compatible sources need the same treatment here.
 const OPENAI_COMPATIBLE_SOURCES = new Set(['openai', 'azure_openai', 'openrouter', 'custom']);
-const COMPLETION_TOKEN_MODELS = /^(?:o1|o3|o4)|gpt-5/i;
+const REASONING_MODELS = /^(?:o1|o3|o4)|gpt-5/i;
+// Reasoning models reject the classic sampling knobs with "Unsupported
+// parameter", so a preset built for older models has to be trimmed down.
+// max_tokens is handled separately below because it has a replacement.
+const UNSUPPORTED_REASONING_PARAMS = [
+  'temperature',
+  'top_p',
+  'presence_penalty',
+  'frequency_penalty',
+  'logprobs',
+  'top_logprobs',
+  'logit_bias',
+];
 
 // SillyTavern's preset can contain top_k for samplers that support it. It is
 // not valid in the OpenAI-compatible payload used by this extension.
@@ -24,14 +36,15 @@ export function normalizeChatCompletionPayload(
     delete normalizedPayload.top_k;
   }
 
-  if (
-    isOpenAICompatible &&
-    model &&
-    COMPLETION_TOKEN_MODELS.test(model) &&
-    normalizedPayload.max_tokens !== undefined
-  ) {
-    normalizedPayload.max_completion_tokens ??= normalizedPayload.max_tokens;
-    delete normalizedPayload.max_tokens;
+  if (isOpenAICompatible && model && REASONING_MODELS.test(model)) {
+    if (normalizedPayload.max_tokens !== undefined) {
+      normalizedPayload.max_completion_tokens ??= normalizedPayload.max_tokens;
+      delete normalizedPayload.max_tokens;
+    }
+
+    for (const param of UNSUPPORTED_REASONING_PARAMS) {
+      delete normalizedPayload[param];
+    }
   }
 
   return normalizedPayload;

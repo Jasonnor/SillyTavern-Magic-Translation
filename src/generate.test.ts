@@ -1,8 +1,8 @@
-import { jest } from '@jest/globals';
+jest.mock('sillytavern-utils-lib/config', () => ({
+  st_echo: jest.fn(),
+}));
 
-const mockSendRequest = jest.fn();
-
-jest.unstable_mockModule('./config.js', () => ({
+jest.mock('./config.js', () => ({
   context: {
     CONNECT_API_MAP: {
       openai: { selected: 'openai', source: 'custom' },
@@ -16,16 +16,15 @@ jest.unstable_mockModule('./config.js', () => ({
       createRequestData: (requestData: Record<string, any>) => ({ ...requestData }),
     },
     ConnectionManagerRequestService: {
-      sendRequest: mockSendRequest,
+      sendRequest: jest.fn(),
     },
   },
 }));
 
-jest.unstable_mockModule('sillytavern-utils-lib/config', () => ({
-  st_echo: jest.fn(),
-}));
+import { context } from './config.js';
+import { normalizeChatCompletionPayload, sendGenerateRequest } from './generate.js';
 
-const { normalizeChatCompletionPayload, sendGenerateRequest } = await import('./generate.js');
+const mockSendRequest = (context as any).ConnectionManagerRequestService.sendRequest as jest.Mock;
 
 describe('sendGenerateRequest', () => {
   beforeEach(() => {
@@ -45,16 +44,52 @@ describe('sendGenerateRequest', () => {
   });
 
   it('converts the preset token field only for OpenAI-compatible reasoning models', () => {
+    expect(normalizeChatCompletionPayload({ max_tokens: 1234, top_k: 10 }, 'custom', 'gpt-5.6-luna')).toEqual({
+      max_completion_tokens: 1234,
+    });
+
+    expect(normalizeChatCompletionPayload({ max_tokens: 1234, top_k: 10 }, 'custom', 'some-other-model')).toEqual({
+      max_tokens: 1234,
+    });
+
+    expect(normalizeChatCompletionPayload({ max_tokens: 1234, top_k: 10 }, 'anthropic', 'gpt-5.6-luna')).toEqual({
+      max_tokens: 1234,
+      top_k: 10,
+    });
+  });
+
+  it('drops the sampling parameters reasoning models reject', () => {
     expect(
-      normalizeChatCompletionPayload({ max_tokens: 1234, top_k: 10 }, 'custom', 'gpt-5.6-luna'),
-    ).toEqual({ max_completion_tokens: 1234 });
+      normalizeChatCompletionPayload(
+        {
+          max_tokens: 1234,
+          temperature: 1,
+          top_p: 0.8,
+          presence_penalty: 0.1,
+          frequency_penalty: 0.1,
+          logprobs: true,
+          top_logprobs: 5,
+          logit_bias: {},
+          stream: false,
+        },
+        'custom',
+        'gpt-5.6-luna',
+      ),
+    ).toEqual({ max_completion_tokens: 1234, stream: false });
 
     expect(
-      normalizeChatCompletionPayload({ max_tokens: 1234, top_k: 10 }, 'custom', 'some-other-model'),
-    ).toEqual({ max_tokens: 1234 });
+      normalizeChatCompletionPayload({ temperature: 0.7, top_p: 0.8 }, 'custom', 'o3-mini'),
+    ).toEqual({});
 
+    // Non-reasoning models keep their samplers.
     expect(
-      normalizeChatCompletionPayload({ max_tokens: 1234, top_k: 10 }, 'anthropic', 'gpt-5.6-luna'),
-    ).toEqual({ max_tokens: 1234, top_k: 10 });
+      normalizeChatCompletionPayload({ temperature: 0.7, top_p: 0.8 }, 'custom', 'some-other-model'),
+    ).toEqual({ temperature: 0.7, top_p: 0.8 });
+
+    // Non-OpenAI sources are left alone entirely.
+    expect(normalizeChatCompletionPayload({ top_p: 0.8, top_k: 10 }, 'anthropic', 'gpt-5.6-luna')).toEqual({
+      top_p: 0.8,
+      top_k: 10,
+    });
   });
 });
